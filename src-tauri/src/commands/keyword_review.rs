@@ -89,6 +89,7 @@ pub(crate) async fn keyword_review_decide(
     state: tauri::State<'_, GatewayState>,
     trace_id: String,
     decision: String,
+    allow_session: Option<bool>,
 ) -> Result<bool, String> {
     let review_decision = match decision.as_str() {
         "approve" => ReviewDecision::Approve,
@@ -105,7 +106,11 @@ pub(crate) async fn keyword_review_decide(
         .keyword_review_registry()
         .ok_or_else(|| "gateway is not running".to_string())?;
 
-    registry.resolve(&trace_id, review_decision)?;
+    if allow_session.unwrap_or(false) && review_decision == ReviewDecision::Approve {
+        registry.resolve_and_allow_session(&trace_id, review_decision)?;
+    } else {
+        registry.resolve(&trace_id, review_decision)?;
+    }
     Ok(true)
 }
 

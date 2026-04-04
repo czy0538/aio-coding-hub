@@ -15,7 +15,7 @@ use axum::body::{Body, Bytes};
 use axum::http::{header, HeaderMap, HeaderValue, Method, Response, StatusCode};
 use http_body_util::BodyExt;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -38,6 +38,7 @@ pub enum ReviewDecision {
 pub struct PendingReviewSnapshot {
     pub trace_id: String,
     pub cli_key: String,
+    pub session_id: Option<String>,
     pub matched_keywords: Vec<String>,
     pub request_snippet: Option<String>,
     pub created_at: i64,
@@ -46,21 +47,26 @@ pub struct PendingReviewSnapshot {
 struct PendingReviewEntry {
     tx: oneshot::Sender<ReviewDecision>,
     cli_key: String,
+    session_id: Option<String>,
     matched_keywords: Vec<String>,
     request_snippet: Option<String>,
     created_at: i64,
 }
 
 /// In-memory registry of pending reviews, keyed by trace_id.
-/// Bridges the gateway handler (waiting) and the Tauri command (signaling).
+/// Also maintains a session allowlist for "allow this conversation" approvals.
 pub struct PendingReviewRegistry {
     inner: Mutex<HashMap<String, PendingReviewEntry>>,
+    /// Sessions that have been approved with "allow this conversation".
+    /// Key: "{cli_key}:{session_id}"
+    allowed_sessions: Mutex<HashSet<String>>,
 }
 
 impl PendingReviewRegistry {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
+            allowed_sessions: Mutex::new(HashSet::new()),
         }
     }
 
@@ -68,6 +74,7 @@ impl PendingReviewRegistry {
         &self,
         trace_id: String,
         cli_key: String,
+        session_id: Option<String>,
         matched_keywords: Vec<String>,
         request_snippet: Option<String>,
         created_at: i64,
@@ -76,6 +83,7 @@ impl PendingReviewRegistry {
         let entry = PendingReviewEntry {
             tx,
             cli_key,
+            session_id,
             matched_keywords,
             request_snippet,
             created_at,
@@ -94,6 +102,47 @@ impl PendingReviewRegistry {
         Ok(())
     }
 
+    /// Resolve and optionally allow the session for future requests.
+    pub fn resolve_and_allow_session(
+        &self,
+        trace_id: &str,
+        decision: ReviewDecision,
+    ) -> Result<(), String> {
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = map
+            .remove(trace_id)
+            .ok_or_else(|| format!("no pending review for trace_id={trace_id}"))?;
+
+        // Add session to allowlist if approved and session_id is available.
+        if decision == ReviewDecision::Approve {
+            if let Some(session_id) = &entry.session_id {
+                let key = format!("{}:{}", entry.cli_key, session_id);
+                let mut allowed = self
+                    .allowed_sessions
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                allowed.insert(key.clone());
+                tracing::info!(
+                    session_key = %key,
+                    "keyword review: session added to allowlist"
+                );
+            }
+        }
+
+        let _ = entry.tx.send(decision);
+        Ok(())
+    }
+
+    /// Check if a session is in the allowlist.
+    pub(super) fn is_session_allowed(&self, cli_key: &str, session_id: &str) -> bool {
+        let key = format!("{cli_key}:{session_id}");
+        let allowed = self
+            .allowed_sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        allowed.contains(&key)
+    }
+
     pub(super) fn remove(&self, trace_id: &str) {
         let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         map.remove(trace_id);
@@ -105,6 +154,7 @@ impl PendingReviewRegistry {
             .map(|(trace_id, entry)| PendingReviewSnapshot {
                 trace_id: trace_id.clone(),
                 cli_key: entry.cli_key.clone(),
+                session_id: entry.session_id.clone(),
                 matched_keywords: entry.matched_keywords.clone(),
                 request_snippet: entry.request_snippet.clone(),
                 created_at: entry.created_at,
@@ -136,6 +186,36 @@ pub(super) struct SavedRequest {
     pub(super) query: Option<String>,
     pub(super) headers: HeaderMap,
     pub(super) body_bytes: Bytes,
+}
+
+// ── Session ID extraction ──
+
+/// Extract a session identifier from request headers/body for the allowlist feature.
+fn extract_session_id_for_review(
+    headers: &HeaderMap,
+    json: Option<&serde_json::Value>,
+) -> Option<String> {
+    // Check common session ID headers (Claude Code, Codex).
+    for header_name in ["session_id", "x-session-id"] {
+        if let Some(value) = headers.get(header_name).and_then(|v| v.to_str().ok()) {
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+
+    // Check JSON body for session-related fields (OpenAI Responses API).
+    if let Some(root) = json {
+        for field in ["previous_response_id", "conversation_id", "thread_id"] {
+            if let Some(id) = root.get(field).and_then(|v| v.as_str()) {
+                if !id.is_empty() {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 // ── Check and Intercept ──
@@ -173,6 +253,25 @@ pub(super) async fn check_and_intercept(
     if keywords.is_empty() {
         tracing::debug!("keyword review: no enabled keywords configured, skipping");
         return None;
+    }
+
+    // Extract session_id for allowlist check.
+    let session_id_for_review =
+        extract_session_id_for_review(&saved_request.headers, introspection_json);
+
+    // Check if this session has been previously allowed ("allow this conversation").
+    if let Some(ref sid) = session_id_for_review {
+        if state
+            .keyword_review_registry
+            .is_session_allowed(cli_key, sid)
+        {
+            tracing::info!(
+                trace_id = %trace_id,
+                session_id = %sid,
+                "keyword review: session in allowlist, skipping review"
+            );
+            return None;
+        }
     }
 
     let searchable = domain::extract_searchable_content(introspection_json);
@@ -219,6 +318,7 @@ pub(super) async fn check_and_intercept(
     let rx = state.keyword_review_registry.insert(
         trace_id.to_string(),
         cli_key.to_string(),
+        session_id_for_review,
         matched.clone(),
         snippet_opt.clone(),
         created_at,

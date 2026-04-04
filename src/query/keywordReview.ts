@@ -52,8 +52,15 @@ export function useKeywordReviewLogsQuery(limit: number, offset: number) {
 export function useKeywordReviewDecideMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ traceId, decision }: { traceId: string; decision: "approve" | "reject" }) =>
-      keywordReviewDecide(traceId, decision),
+    mutationFn: ({
+      traceId,
+      decision,
+      allowSession,
+    }: {
+      traceId: string;
+      decision: "approve" | "reject";
+      allowSession?: boolean;
+    }) => keywordReviewDecide(traceId, decision, allowSession),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keywordReviewKeys.pending() });
       queryClient.invalidateQueries({ queryKey: keywordReviewKeys.logs(50, 0) });

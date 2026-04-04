@@ -39,10 +39,10 @@ export function KeywordReviewDialog() {
     "关键词审核事件监听失败"
   );
 
-  const handleDecide = (decision: "approve" | "reject") => {
+  const handleDecide = (decision: "approve" | "reject", allowSession?: boolean) => {
     if (!pendingReview) return;
     decideMutation.mutate(
-      { traceId: pendingReview.trace_id, decision },
+      { traceId: pendingReview.trace_id, decision, allowSession },
       { onSettled: () => setPendingReview(null) }
     );
   };
@@ -93,8 +93,15 @@ export function KeywordReviewDialog() {
           >
             拒绝
           </Button>
-          <Button onClick={() => handleDecide("approve")} disabled={decideMutation.isPending}>
+          <Button
+            variant="ghost"
+            onClick={() => handleDecide("approve")}
+            disabled={decideMutation.isPending}
+          >
             批准放行
+          </Button>
+          <Button onClick={() => handleDecide("approve", true)} disabled={decideMutation.isPending}>
+            本次对话放行
           </Button>
         </div>
       </DialogContent>

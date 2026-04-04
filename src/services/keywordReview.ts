@@ -76,12 +76,13 @@ export function keywordReviewLogsList(limit: number, offset: number): Promise<Ke
 
 export function keywordReviewDecide(
   traceId: string,
-  decision: "approve" | "reject"
+  decision: "approve" | "reject",
+  allowSession?: boolean
 ): Promise<boolean> {
   return invokeServiceCommand({
     title: "审核操作失败",
     cmd: "keyword_review_decide",
-    args: { traceId, decision },
+    args: { traceId, decision, allowSession: allowSession ?? false },
   });
 }
 
