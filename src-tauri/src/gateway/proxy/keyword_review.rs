@@ -156,11 +156,21 @@ pub(super) async fn check_and_intercept(
     };
 
     if keywords.is_empty() {
+        tracing::debug!("keyword review: no enabled keywords configured, skipping");
         return None;
     }
 
     // Extract searchable content and match.
     let searchable = domain::extract_searchable_content(introspection_json);
+
+    tracing::info!(
+        trace_id = %trace_id,
+        keyword_count = keywords.len(),
+        searchable_len = searchable.len(),
+        searchable_preview = %searchable.chars().take(200).collect::<String>(),
+        "keyword review: scanning content"
+    );
+
     let matched = domain::match_keywords(&searchable, &keywords);
 
     if matched.is_empty() {

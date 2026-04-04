@@ -969,18 +969,31 @@ pub(in crate::gateway) async fn proxy_impl(
     }
 
     // ── keyword review gate ──
-    if runtime_settings.enable_keyword_review && !is_claude_count_tokens {
-        if let Some(resp) = super::keyword_review::check_and_intercept(
-            &state,
-            &trace_id,
-            &cli_key,
-            introspection_json.as_ref(),
-            None, // session_id not resolved yet — pass None
-            created_at,
-        )
-        .await
-        {
-            return resp;
+    if !is_claude_count_tokens {
+        if runtime_settings.enable_keyword_review {
+            tracing::info!(
+                trace_id = %trace_id,
+                cli_key = %cli_key,
+                has_introspection = introspection_json.is_some(),
+                "keyword review gate: checking request"
+            );
+            if let Some(resp) = super::keyword_review::check_and_intercept(
+                &state,
+                &trace_id,
+                &cli_key,
+                introspection_json.as_ref(),
+                None, // session_id not resolved yet — pass None
+                created_at,
+            )
+            .await
+            {
+                return resp;
+            }
+        } else {
+            tracing::debug!(
+                trace_id = %trace_id,
+                "keyword review gate: feature disabled in settings"
+            );
         }
     }
 
