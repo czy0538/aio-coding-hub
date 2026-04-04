@@ -595,6 +595,7 @@ mod tests {
         let mut rx = registry.insert(
             "trace-1".to_string(),
             "claude".to_string(),
+            Some("sess-1".to_string()),
             vec!["password".to_string()],
             Some("snippet".to_string()),
             1000,
@@ -624,6 +625,7 @@ mod tests {
         let _rx = registry.insert(
             "trace-2".to_string(),
             "codex".to_string(),
+            None,
             vec!["secret".to_string()],
             None,
             2000,
@@ -640,6 +642,7 @@ mod tests {
         let _rx1 = registry.insert(
             "t1".to_string(),
             "claude".to_string(),
+            Some("sess-a".to_string()),
             vec!["kw1".to_string()],
             Some("s1".to_string()),
             100,
@@ -647,6 +650,7 @@ mod tests {
         let _rx2 = registry.insert(
             "t2".to_string(),
             "codex".to_string(),
+            None,
             vec!["kw2".to_string()],
             None,
             200,
@@ -654,5 +658,25 @@ mod tests {
 
         let pending = registry.list_pending();
         assert_eq!(pending.len(), 2);
+    }
+
+    #[test]
+    fn resolve_and_allow_session_adds_to_allowlist() {
+        let registry = PendingReviewRegistry::new();
+        let _rx = registry.insert(
+            "t3".to_string(),
+            "claude".to_string(),
+            Some("sess-x".to_string()),
+            vec!["pw".to_string()],
+            None,
+            300,
+        );
+
+        assert!(!registry.is_session_allowed("claude", "sess-x"));
+        registry
+            .resolve_and_allow_session("t3", ReviewDecision::Approve)
+            .unwrap();
+        assert!(registry.is_session_allowed("claude", "sess-x"));
+        assert!(!registry.is_session_allowed("codex", "sess-x"));
     }
 }
