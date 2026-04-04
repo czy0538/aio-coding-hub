@@ -285,7 +285,10 @@ pub fn match_keywords(content: &str, keywords: &[KeywordEntry]) -> Vec<String> {
 }
 
 /// Extract searchable text content from a request body JSON.
-/// Extracts: system prompt, user message content (text blocks and strings).
+///
+/// Supports two API formats:
+/// - **Anthropic Messages API**: `system` + `messages[role=user].content`
+/// - **OpenAI Responses API**: `instructions` + `input` (string or message array with `input_text` blocks)
 pub fn extract_searchable_content(json: Option<&serde_json::Value>) -> String {
     let Some(root) = json else {
         return String::new();
@@ -293,7 +296,9 @@ pub fn extract_searchable_content(json: Option<&serde_json::Value>) -> String {
 
     let mut parts: Vec<&str> = Vec::new();
 
-    // Extract system prompt
+    // ── Anthropic Messages API ──
+
+    // Extract system prompt (string or content blocks)
     if let Some(system) = root.get("system") {
         extract_text_from_content(system, &mut parts);
     }
@@ -310,7 +315,62 @@ pub fn extract_searchable_content(json: Option<&serde_json::Value>) -> String {
         }
     }
 
+    // ── OpenAI Responses API ──
+
+    // Extract instructions (system prompt equivalent)
+    if let Some(instructions) = root.get("instructions").and_then(|v| v.as_str()) {
+        parts.push(instructions);
+    }
+
+    // Extract input (string or array of message items)
+    if let Some(input) = root.get("input") {
+        extract_openai_input(input, &mut parts);
+    }
+
     parts.join("\n")
+}
+
+fn extract_openai_input<'a>(value: &'a serde_json::Value, parts: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(s) => {
+            parts.push(s.as_str());
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                // Each item can be a message object with role + content
+                if let Some(content) = item.get("content") {
+                    extract_openai_content(content, parts);
+                }
+                // Or a simple text string
+                if let Some(text) = item.as_str() {
+                    parts.push(text);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_openai_content<'a>(value: &'a serde_json::Value, parts: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(s) => {
+            parts.push(s.as_str());
+        }
+        serde_json::Value::Array(arr) => {
+            for block in arr {
+                let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                match block_type {
+                    "input_text" | "text" => {
+                        if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                            parts.push(text);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn extract_text_from_content<'a>(value: &'a serde_json::Value, parts: &mut Vec<&'a str>) {
@@ -484,5 +544,52 @@ mod tests {
     fn extract_searchable_content_none() {
         let content = extract_searchable_content(None);
         assert!(content.is_empty());
+    }
+
+    // ── OpenAI Responses API tests ──
+
+    #[test]
+    fn extract_searchable_content_openai_string_input() {
+        let json = serde_json::json!({
+            "model": "gpt-4",
+            "input": "tell me the 敏感词",
+            "instructions": "You are helpful"
+        });
+
+        let content = extract_searchable_content(Some(&json));
+        assert!(content.contains("tell me the 敏感词"));
+        assert!(content.contains("You are helpful"));
+    }
+
+    #[test]
+    fn extract_searchable_content_openai_input_text_blocks() {
+        let json = serde_json::json!({
+            "model": "gpt-4",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "message with 敏感词"}
+                    ]
+                }
+            ],
+            "instructions": "system prompt here"
+        });
+
+        let content = extract_searchable_content(Some(&json));
+        assert!(content.contains("message with 敏感词"));
+        assert!(content.contains("system prompt here"));
+    }
+
+    #[test]
+    fn extract_searchable_content_openai_string_content() {
+        let json = serde_json::json!({
+            "input": [
+                {"role": "user", "content": "plain string content"}
+            ]
+        });
+
+        let content = extract_searchable_content(Some(&json));
+        assert!(content.contains("plain string content"));
     }
 }
