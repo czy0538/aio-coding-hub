@@ -59,7 +59,6 @@ pub(super) struct GatewayAppState {
     pub(super) recent_errors: Arc<Mutex<RecentErrorCache>>,
     pub(super) latency_cache: Arc<Mutex<ProviderBaseUrlPingCache>>,
     pub(super) keyword_review_registry: Arc<PendingReviewRegistry>,
-    pub(super) gateway_port: u16,
 }
 fn port_candidates(preferred: Option<u16>) -> impl Iterator<Item = u16> {
     let mut candidates = Vec::with_capacity(
@@ -265,7 +264,6 @@ impl GatewayManager {
             recent_errors,
             latency_cache,
             keyword_review_registry: keyword_review_registry.clone(),
-            gateway_port: port,
         };
 
         let app = build_router(state);

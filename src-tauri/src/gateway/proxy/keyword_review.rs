@@ -13,6 +13,7 @@ use crate::gateway::manager::GatewayAppState;
 use crate::settings;
 use axum::body::{Body, Bytes};
 use axum::http::{header, HeaderMap, HeaderValue, Method, Response, StatusCode};
+use http_body_util::BodyExt;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -363,61 +364,74 @@ async fn handle_approved(
     tx: &tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
     saved_request: SavedRequest,
 ) {
-    tracing::info!(trace_id = %trace_id, "keyword review: approved, forwarding via loopback");
+    tracing::info!(trace_id = %trace_id, "keyword review: approved, replaying request through proxy");
     update_review_status(state, trace_id, "approved");
 
-    let loopback_url = build_loopback_url(
-        state.gateway_port,
-        &saved_request.cli_key,
-        &saved_request.forwarded_path,
-        saved_request.query.as_deref(),
-    );
+    // Reconstruct an axum Request and call proxy_impl directly.
+    // This replays the original request through the full gateway pipeline
+    // (provider selection, failover, upstream forwarding, response fixing, etc.)
+    // without a network round-trip.
+    let uri = match &saved_request.query {
+        Some(q) if !q.is_empty() => format!(
+            "/{}{forwarded}?{q}",
+            saved_request.cli_key,
+            forwarded = saved_request.forwarded_path,
+        ),
+        _ => format!(
+            "/{}{forwarded}",
+            saved_request.cli_key,
+            forwarded = saved_request.forwarded_path,
+        ),
+    };
 
-    let mut req_builder = state
-        .client
-        .request(saved_request.method, &loopback_url)
-        .header(BYPASS_HEADER, trace_id)
-        .body(saved_request.body_bytes);
+    let req_builder = axum::http::Request::builder()
+        .method(saved_request.method)
+        .uri(&uri);
 
-    for (name, value) in &saved_request.headers {
-        if name == header::HOST || name == header::CONTENT_LENGTH {
-            continue;
-        }
-        req_builder = req_builder.header(name, value);
-    }
-
-    let response = match req_builder.send().await {
-        Ok(resp) => resp,
+    // Set headers on the builder (we can't set HeaderMap directly on builder,
+    // so we build first then replace headers).
+    let mut req = match req_builder.body(Body::from(saved_request.body_bytes)) {
+        Ok(r) => r,
         Err(err) => {
-            tracing::error!(trace_id = %trace_id, "keyword review: loopback request failed: {err}");
-            let _ = tx
-                .send(Ok(Bytes::from(format!(
-                    "data: {{\"type\":\"error\",\"error\":{{\"type\":\"api_error\",\"message\":\"keyword review loopback failed: {err}\"}}}}\n\n"
-                ))))
-                .await;
+            tracing::error!(trace_id = %trace_id, "keyword review: failed to build replay request: {err}");
             return;
         }
     };
 
+    *req.headers_mut() = saved_request.headers;
+    // Add bypass header so the replayed request skips keyword review.
+    req.headers_mut()
+        .insert(BYPASS_HEADER, HeaderValue::from_static("1"));
+
+    // Call proxy_impl directly (it's pub(in crate::gateway)).
+    let response = super::handler::proxy_impl(
+        state.clone(),
+        saved_request.cli_key,
+        saved_request.forwarded_path,
+        req,
+    )
+    .await;
+
     tracing::info!(
         trace_id = %trace_id,
         status = %response.status(),
-        "keyword review: loopback response received, piping to client"
+        "keyword review: replay response received, piping to client"
     );
 
-    // Pipe the upstream response body through our SSE stream.
-    use tokio_stream::StreamExt;
-    let mut byte_stream = response.bytes_stream();
-    while let Some(chunk_result) = byte_stream.next().await {
-        match chunk_result {
-            Ok(chunk) => {
-                if tx.send(Ok(chunk)).await.is_err() {
-                    tracing::info!(trace_id = %trace_id, "keyword review: client disconnected during loopback pipe");
-                    return;
+    // Pipe the response body through our SSE stream.
+    let mut body = response.into_body();
+    while let Some(frame_result) = body.frame().await {
+        match frame_result {
+            Ok(frame) => {
+                if let Ok(data) = frame.into_data() {
+                    if tx.send(Ok(data)).await.is_err() {
+                        tracing::info!(trace_id = %trace_id, "keyword review: client disconnected during replay pipe");
+                        return;
+                    }
                 }
             }
             Err(err) => {
-                tracing::warn!(trace_id = %trace_id, "keyword review: loopback stream error: {err}");
+                tracing::warn!(trace_id = %trace_id, "keyword review: replay stream error: {err}");
                 return;
             }
         }
@@ -457,14 +471,6 @@ async fn handle_timeout(
             let error_event = b"data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Request rejected: keyword review timed out.\"}}\n\n";
             let _ = tx.send(Ok(Bytes::from_static(error_event))).await;
         }
-    }
-}
-
-fn build_loopback_url(port: u16, cli_key: &str, path: &str, query: Option<&str>) -> String {
-    let base = format!("http://127.0.0.1:{port}/{cli_key}{path}");
-    match query {
-        Some(q) if !q.is_empty() => format!("{base}?{q}"),
-        _ => base,
     }
 }
 
@@ -548,17 +554,5 @@ mod tests {
 
         let pending = registry.list_pending();
         assert_eq!(pending.len(), 2);
-    }
-
-    #[test]
-    fn build_loopback_url_without_query() {
-        let url = build_loopback_url(37123, "codex", "/v1/responses", None);
-        assert_eq!(url, "http://127.0.0.1:37123/codex/v1/responses");
-    }
-
-    #[test]
-    fn build_loopback_url_with_query() {
-        let url = build_loopback_url(37123, "claude", "/v1/messages", Some("stream=true"));
-        assert_eq!(url, "http://127.0.0.1:37123/claude/v1/messages?stream=true");
     }
 }
