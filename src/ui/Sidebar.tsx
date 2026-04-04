@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Pencil,
   Settings2,
+  Shield,
   Terminal,
   TrendingDown,
   Wrench,
@@ -36,6 +37,7 @@ const NAV: NavItem[] = [
   { to: "/usage", label: "用量", icon: TrendingDown },
   { to: "/console", label: "控制台", icon: Terminal },
   { to: "/logs", label: "代理记录", icon: FileText },
+  { to: "/keyword-review", label: "关键词审核", icon: Shield },
   { to: "/cli-manager", label: "CLI 管理", icon: Wrench },
   { to: "/settings", label: "设置", icon: Settings2 },
 ];

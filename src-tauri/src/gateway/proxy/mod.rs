@@ -13,6 +13,7 @@ mod forwarder;
 mod gemini_oauth;
 mod handler;
 mod http_util;
+pub(super) mod keyword_review;
 mod logging;
 mod model_rewrite;
 pub(in crate::gateway) mod protocol_bridge;

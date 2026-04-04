@@ -442,6 +442,14 @@ pub fn run() {
             workspace_delete,
             workspace_preview,
             workspace_apply,
+            // ── keyword_review ──
+            keyword_review_keywords_list,
+            keyword_review_keyword_add,
+            keyword_review_keyword_set_enabled,
+            keyword_review_keyword_delete,
+            keyword_review_logs_list,
+            keyword_review_decide,
+            keyword_review_pending_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

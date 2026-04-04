@@ -10,6 +10,7 @@ use tokio::sync::oneshot;
 use super::codex_session_id::CodexSessionIdCache;
 use super::events::{GatewayLogEvent, GATEWAY_LOG_EVENT_NAME, GATEWAY_STATUS_EVENT_NAME};
 use super::listen;
+use super::proxy::keyword_review::PendingReviewRegistry;
 use super::proxy::{GatewayErrorCode, ProviderBaseUrlPingCache, RecentErrorCache};
 use super::routes::build_router;
 use super::util::now_unix_seconds;
@@ -27,6 +28,7 @@ struct RunningGateway {
     circuit_task: tauri::async_runtime::JoinHandle<()>,
     oauth_refresh_shutdown: tokio::sync::watch::Sender<bool>,
     oauth_refresh_task: tauri::async_runtime::JoinHandle<()>,
+    keyword_review_registry: Arc<PendingReviewRegistry>,
 }
 
 type RunningGatewayHandles = (
@@ -56,6 +58,7 @@ pub(super) struct GatewayAppState {
     pub(super) codex_session_cache: Arc<Mutex<CodexSessionIdCache>>,
     pub(super) recent_errors: Arc<Mutex<RecentErrorCache>>,
     pub(super) latency_cache: Arc<Mutex<ProviderBaseUrlPingCache>>,
+    pub(super) keyword_review_registry: Arc<PendingReviewRegistry>,
 }
 fn port_candidates(preferred: Option<u16>) -> impl Iterator<Item = u16> {
     let mut candidates = Vec::with_capacity(
@@ -136,6 +139,12 @@ impl GatewayManager {
             Some(r) => r.session.clear_cli_bindings(cli_key),
             None => 0,
         }
+    }
+
+    pub fn keyword_review_registry(&self) -> Option<Arc<PendingReviewRegistry>> {
+        self.running
+            .as_ref()
+            .map(|r| r.keyword_review_registry.clone())
     }
 
     pub fn start(
@@ -240,6 +249,7 @@ impl GatewayManager {
         let codex_session_cache = Arc::new(Mutex::new(CodexSessionIdCache::default()));
         let recent_errors = Arc::new(Mutex::new(RecentErrorCache::default()));
         let latency_cache = Arc::new(Mutex::new(ProviderBaseUrlPingCache::default()));
+        let keyword_review_registry = Arc::new(PendingReviewRegistry::new());
 
         let state_app = app.clone();
 
@@ -253,6 +263,7 @@ impl GatewayManager {
             codex_session_cache,
             recent_errors,
             latency_cache,
+            keyword_review_registry: keyword_review_registry.clone(),
         };
 
         let app = build_router(state);
@@ -293,6 +304,7 @@ impl GatewayManager {
             circuit_task,
             oauth_refresh_shutdown: oauth_refresh_shutdown_tx,
             oauth_refresh_task,
+            keyword_review_registry,
         });
 
         let status = self.status();
@@ -450,7 +462,7 @@ impl GatewayManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{GatewayManager, RunningGateway};
+    use super::{GatewayManager, PendingReviewRegistry, RunningGateway};
     use crate::{circuit_breaker, session_manager};
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -481,6 +493,7 @@ mod tests {
             circuit_task: tauri::async_runtime::JoinHandle::Tokio(rt.spawn(async {})),
             oauth_refresh_shutdown: oauth_refresh_shutdown_tx,
             oauth_refresh_task: tauri::async_runtime::JoinHandle::Tokio(rt.spawn(async {})),
+            keyword_review_registry: Arc::new(PendingReviewRegistry::new()),
         }
     }
 

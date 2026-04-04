@@ -72,6 +72,9 @@ pub(crate) struct SettingsUpdate {
     pub cx2cc_drop_stop_sequences: Option<bool>,
     pub cx2cc_clean_schema: Option<bool>,
     pub cx2cc_filter_batch_tool: Option<bool>,
+    pub enable_keyword_review: Option<bool>,
+    pub keyword_review_timeout_seconds: Option<u32>,
+    pub keyword_review_timeout_action: Option<settings::KeywordReviewTimeoutAction>,
 }
 
 #[tauri::command]
@@ -176,6 +179,9 @@ pub(crate) async fn settings_set_impl<R: tauri::Runtime>(
         cx2cc_drop_stop_sequences,
         cx2cc_clean_schema,
         cx2cc_filter_batch_tool,
+        enable_keyword_review,
+        keyword_review_timeout_seconds,
+        keyword_review_timeout_action,
     } = update;
 
     let app_for_work = app.clone();
@@ -356,6 +362,12 @@ pub(crate) async fn settings_set_impl<R: tauri::Runtime>(
                 cx2cc_drop_stop_sequences,
                 cx2cc_clean_schema,
                 cx2cc_filter_batch_tool,
+                enable_keyword_review: enable_keyword_review
+                    .unwrap_or(previous.enable_keyword_review),
+                keyword_review_timeout_seconds: keyword_review_timeout_seconds
+                    .unwrap_or(previous.keyword_review_timeout_seconds),
+                keyword_review_timeout_action: keyword_review_timeout_action
+                    .unwrap_or(previous.keyword_review_timeout_action),
             };
 
             let next_settings = settings::write(&app_for_work, &settings)?;

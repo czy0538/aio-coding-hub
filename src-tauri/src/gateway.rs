@@ -16,6 +16,7 @@ pub(crate) mod util;
 mod warmup;
 
 pub use manager::GatewayManager;
+pub use proxy::keyword_review::{PendingReviewSnapshot, ReviewDecision};
 
 use serde::Serialize;
 

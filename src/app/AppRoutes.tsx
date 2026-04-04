@@ -41,6 +41,9 @@ const UsagePage = lazy(() => import("../pages/UsagePage").then((m) => ({ default
 const WorkspacesPage = lazy(() =>
   import("../pages/WorkspacesPage").then((m) => ({ default: m.WorkspacesPage }))
 );
+const KeywordReviewPage = lazy(() =>
+  import("../pages/KeywordReviewPage").then((m) => ({ default: m.KeywordReviewPage }))
+);
 
 function PageLoadingFallback() {
   return (
@@ -80,6 +83,7 @@ export function AppRoutes() {
         <Route path="/cli-manager" element={renderLazyPage(CliManagerPage)} />
         <Route path="/skills" element={renderLazyPage(SkillsPage)} />
         <Route path="/skills/market" element={renderLazyPage(SkillsMarketPage)} />
+        <Route path="/keyword-review" element={renderLazyPage(KeywordReviewPage)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

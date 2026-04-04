@@ -1,5 +1,6 @@
 import { Outlet } from "react-router-dom";
 import { UpdateDialog } from "../components/UpdateDialog";
+import { KeywordReviewDialog } from "../components/KeywordReviewDialog";
 import { useResponsive } from "../hooks/useMediaQuery";
 import { useSidebarState } from "../hooks/useSidebarState";
 import { MobileHeader, MobileNav } from "../ui/MobileNav";
@@ -43,6 +44,7 @@ export function AppLayout() {
       <MobileNav isOpen={sidebar.isMobileDrawerOpen} onClose={sidebar.closeMobileDrawer} />
 
       <UpdateDialog />
+      <KeywordReviewDialog />
     </div>
   );
 }

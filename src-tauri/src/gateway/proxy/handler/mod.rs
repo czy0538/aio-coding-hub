@@ -414,6 +414,7 @@ struct HandlerRuntimeSettings {
     upstream_first_byte_timeout_secs: u32,
     upstream_stream_idle_timeout_secs: u32,
     upstream_request_timeout_non_streaming_secs: u32,
+    enable_keyword_review: bool,
 }
 
 fn handler_runtime_settings(
@@ -519,6 +520,9 @@ fn handler_runtime_settings(
         upstream_request_timeout_non_streaming_secs: settings_cfg
             .map(|cfg| cfg.upstream_request_timeout_non_streaming_seconds)
             .unwrap_or(settings::DEFAULT_UPSTREAM_REQUEST_TIMEOUT_NON_STREAMING_SECONDS),
+        enable_keyword_review: settings_cfg
+            .map(|cfg| cfg.enable_keyword_review)
+            .unwrap_or(false),
     }
 }
 
@@ -961,6 +965,22 @@ pub(in crate::gateway) async fn proxy_impl(
                     }),
                 );
             }
+        }
+    }
+
+    // ── keyword review gate ──
+    if runtime_settings.enable_keyword_review && !is_claude_count_tokens {
+        if let Some(resp) = super::keyword_review::check_and_intercept(
+            &state,
+            &trace_id,
+            &cli_key,
+            introspection_json.as_ref(),
+            None, // session_id not resolved yet — pass None
+            created_at,
+        )
+        .await
+        {
+            return resp;
         }
     }
 

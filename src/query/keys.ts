@@ -254,3 +254,11 @@ export const cliSessionsKeys = {
   messages: (source: CliSessionsSource, filePath: string, fromEnd = true, wslDistro?: string) =>
     [...cliSessionsAllKey, "messages", source, filePath, fromEnd, wslDistro ?? null] as const,
 };
+
+const keywordReviewAllKey = ["keywordReview"] as const;
+export const keywordReviewKeys = {
+  all: keywordReviewAllKey,
+  keywords: () => [...keywordReviewAllKey, "keywords"] as const,
+  logs: (limit: number, offset: number) => [...keywordReviewAllKey, "logs", limit, offset] as const,
+  pending: () => [...keywordReviewAllKey, "pending"] as const,
+};

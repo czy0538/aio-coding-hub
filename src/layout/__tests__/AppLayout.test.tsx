@@ -8,6 +8,10 @@ vi.mock("../../components/UpdateDialog", () => ({
   UpdateDialog: () => <div data-testid="update-dialog">update-dialog</div>,
 }));
 
+vi.mock("../../components/KeywordReviewDialog", () => ({
+  KeywordReviewDialog: () => <div data-testid="keyword-review-dialog">keyword-review-dialog</div>,
+}));
+
 vi.mock("../../ui/Sidebar", () => ({
   Sidebar: ({ isOpen }: { isOpen: boolean }) => (
     <aside data-testid="sidebar">sidebar-open:{String(isOpen)}</aside>

@@ -9,7 +9,7 @@ use std::sync::{OnceLock, RwLock};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
-pub const SCHEMA_VERSION: u32 = 29;
+pub const SCHEMA_VERSION: u32 = 30;
 const SCHEMA_VERSION_DISABLE_UPSTREAM_TIMEOUTS: u32 = 7;
 const SCHEMA_VERSION_ADD_GATEWAY_RECTIFIERS: u32 = 8;
 const SCHEMA_VERSION_ADD_CIRCUIT_BREAKER_NOTICE: u32 = 9;
@@ -33,6 +33,7 @@ const SCHEMA_VERSION_ADD_CX2CC_SETTINGS: u32 = 26;
 const SCHEMA_VERSION_ENABLE_DEFAULT_UPSTREAM_TIMEOUTS: u32 = 27;
 const SCHEMA_VERSION_ADD_BILLING_HEADER_RECTIFIER: u32 = 28;
 const SCHEMA_VERSION_ADD_CLI_PRIORITY_ORDER: u32 = 29;
+const SCHEMA_VERSION_ADD_KEYWORD_REVIEW: u32 = 30;
 pub const DEFAULT_GATEWAY_PORT: u16 = 37123;
 pub const MAX_GATEWAY_PORT: u16 = 37199;
 const DEFAULT_LOG_RETENTION_DAYS: u32 = 7;
@@ -57,6 +58,9 @@ const DEFAULT_ENABLE_CACHE_ANOMALY_MONITOR: bool = false;
 const DEFAULT_ENABLE_TASK_COMPLETE_NOTIFY: bool = true;
 const DEFAULT_ENABLE_NOTIFICATION_SOUND: bool = true;
 const DEFAULT_ENABLE_RESPONSE_FIXER: bool = true;
+const DEFAULT_ENABLE_KEYWORD_REVIEW: bool = false;
+const DEFAULT_KEYWORD_REVIEW_TIMEOUT_SECONDS: u32 = 300;
+const MAX_KEYWORD_REVIEW_TIMEOUT_SECONDS: u32 = 3600;
 const DEFAULT_ENABLE_CLI_PROXY_STARTUP_RECOVERY: bool = true;
 const DEFAULT_SHOW_HOME_HEATMAP: bool = true;
 const DEFAULT_SHOW_HOME_USAGE: bool = true;
@@ -168,6 +172,19 @@ impl Default for CodexHomeMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum KeywordReviewTimeoutAction {
+    Approve,
+    Reject,
+}
+
+impl Default for KeywordReviewTimeoutAction {
+    fn default() -> Self {
+        Self::Reject
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
 #[serde(default)]
 pub struct WslTargetCli {
@@ -268,6 +285,10 @@ pub struct AppSettings {
     pub cx2cc_drop_stop_sequences: bool,
     pub cx2cc_clean_schema: bool,
     pub cx2cc_filter_batch_tool: bool,
+    // Keyword review: intercept requests containing sensitive keywords for approval.
+    pub enable_keyword_review: bool,
+    pub keyword_review_timeout_seconds: u32,
+    pub keyword_review_timeout_action: KeywordReviewTimeoutAction,
 }
 
 impl Default for AppSettings {
@@ -333,6 +354,9 @@ impl Default for AppSettings {
             cx2cc_drop_stop_sequences: true,
             cx2cc_clean_schema: true,
             cx2cc_filter_batch_tool: true,
+            enable_keyword_review: DEFAULT_ENABLE_KEYWORD_REVIEW,
+            keyword_review_timeout_seconds: DEFAULT_KEYWORD_REVIEW_TIMEOUT_SECONDS,
+            keyword_review_timeout_action: KeywordReviewTimeoutAction::default(),
         }
     }
 }
@@ -904,9 +928,18 @@ fn migrate_add_cli_priority_order(
     true
 }
 
+fn migrate_add_keyword_review(settings: &mut AppSettings, schema_version_present: bool) -> bool {
+    // v30: Add keyword review feature (enable, timeout, timeout action).
+    migrate_bump_schema_version(
+        settings,
+        schema_version_present,
+        SCHEMA_VERSION_ADD_KEYWORD_REVIEW,
+    )
+}
+
 type SettingsMigration = fn(&mut AppSettings, bool) -> bool;
 
-const SETTINGS_MIGRATIONS: [SettingsMigration; 23] = [
+const SETTINGS_MIGRATIONS: [SettingsMigration; 24] = [
     migrate_disable_upstream_timeouts,
     migrate_add_gateway_rectifiers,
     migrate_add_circuit_breaker_notice,
@@ -930,6 +963,7 @@ const SETTINGS_MIGRATIONS: [SettingsMigration; 23] = [
     migrate_enable_default_upstream_timeouts,
     migrate_add_billing_header_rectifier,
     migrate_add_cli_priority_order,
+    migrate_add_keyword_review,
 ];
 
 fn apply_settings_migrations(settings: &mut AppSettings, schema_version_present: bool) -> bool {
@@ -1251,6 +1285,16 @@ pub fn write<R: tauri::Runtime>(
     if settings.circuit_breaker_open_duration_minutes > MAX_CIRCUIT_BREAKER_OPEN_DURATION_MINUTES {
         return Err(format!(
             "circuit_breaker_open_duration_minutes must be <= {MAX_CIRCUIT_BREAKER_OPEN_DURATION_MINUTES}"
+        )
+        .into());
+    }
+
+    if settings.keyword_review_timeout_seconds == 0 {
+        return Err("SEC_INVALID_INPUT: keyword_review_timeout_seconds must be >= 1".into());
+    }
+    if settings.keyword_review_timeout_seconds > MAX_KEYWORD_REVIEW_TIMEOUT_SECONDS {
+        return Err(format!(
+            "SEC_INVALID_INPUT: keyword_review_timeout_seconds must be <= {MAX_KEYWORD_REVIEW_TIMEOUT_SECONDS}"
         )
         .into());
     }
