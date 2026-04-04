@@ -970,20 +970,38 @@ pub(in crate::gateway) async fn proxy_impl(
 
     // ── keyword review gate ──
     if !is_claude_count_tokens {
-        if runtime_settings.enable_keyword_review {
+        // Skip keyword review if this is a loopback request after approval.
+        let bypass = headers.get(super::keyword_review::BYPASS_HEADER).is_some();
+
+        if bypass {
+            headers.remove(super::keyword_review::BYPASS_HEADER);
+            tracing::info!(
+                trace_id = %trace_id,
+                "keyword review gate: bypassed (loopback after approval)"
+            );
+        } else if runtime_settings.enable_keyword_review {
             tracing::info!(
                 trace_id = %trace_id,
                 cli_key = %cli_key,
                 has_introspection = introspection_json.is_some(),
                 "keyword review gate: checking request"
             );
+            let saved = super::keyword_review::SavedRequest {
+                method: method.clone(),
+                cli_key: cli_key.clone(),
+                forwarded_path: forwarded_path.clone(),
+                query: query.clone(),
+                headers: headers.clone(),
+                body_bytes: body_bytes.clone(),
+            };
             if let Some(resp) = super::keyword_review::check_and_intercept(
                 &state,
                 &trace_id,
                 &cli_key,
                 introspection_json.as_ref(),
-                None, // session_id not resolved yet — pass None
+                None,
                 created_at,
+                saved,
             )
             .await
             {

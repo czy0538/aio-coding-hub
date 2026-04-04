@@ -3,17 +3,24 @@
 //! When enabled, incoming requests are checked against a configured keyword list.
 //! If sensitive keywords are found, the request is held with SSE comment heartbeats
 //! until a human reviewer approves or rejects it via the desktop UI.
+//!
+//! On approval, the original request is replayed through the gateway via a loopback
+//! HTTP request (with a bypass header to skip re-checking), and the upstream response
+//! is piped back through the same SSE connection.
 
 use crate::domain::keyword_review as domain;
 use crate::gateway::manager::GatewayAppState;
 use crate::settings;
 use axum::body::{Body, Bytes};
-use axum::http::{header, HeaderValue, Response, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, Response, StatusCode};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::oneshot;
+
+/// Header used to bypass keyword review on loopback requests after approval.
+pub(super) const BYPASS_HEADER: &str = "x-aio-keyword-review-bypass";
 
 // ── Review Decision ──
 
@@ -56,7 +63,6 @@ impl PendingReviewRegistry {
         }
     }
 
-    /// Insert a new pending review. Returns the receiver the handler will await.
     pub(super) fn insert(
         &self,
         trace_id: String,
@@ -78,25 +84,20 @@ impl PendingReviewRegistry {
         rx
     }
 
-    /// Signal a decision for a pending review.
     pub fn resolve(&self, trace_id: &str, decision: ReviewDecision) -> Result<(), String> {
         let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let entry = map
             .remove(trace_id)
             .ok_or_else(|| format!("no pending review for trace_id={trace_id}"))?;
-        // If the receiver is already dropped (client disconnected), send returns Err but we
-        // don't treat that as a fatal error.
         let _ = entry.tx.send(decision);
         Ok(())
     }
 
-    /// Remove a review entry (used on timeout cleanup).
     pub(super) fn remove(&self, trace_id: &str) {
         let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         map.remove(trace_id);
     }
 
-    /// List all pending reviews (for the frontend).
     pub fn list_pending(&self) -> Vec<PendingReviewSnapshot> {
         let map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         map.iter()
@@ -124,11 +125,23 @@ pub(super) struct KeywordReviewEvent {
     pub(super) created_at: i64,
 }
 
+// ── Saved request context for loopback replay ──
+
+/// Original request data saved for replay after approval.
+pub(super) struct SavedRequest {
+    pub(super) method: Method,
+    pub(super) cli_key: String,
+    pub(super) forwarded_path: String,
+    pub(super) query: Option<String>,
+    pub(super) headers: HeaderMap,
+    pub(super) body_bytes: Bytes,
+}
+
 // ── Check and Intercept ──
 
 /// Check if the request content matches any configured keywords.
 /// If a match is found, returns an SSE response that sends heartbeats while awaiting review.
-/// If no match or feature disabled, returns None and the caller should proceed normally.
+/// On approval, replays the original request via a loopback to the gateway.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn check_and_intercept(
     state: &GatewayAppState,
@@ -137,6 +150,7 @@ pub(super) async fn check_and_intercept(
     introspection_json: Option<&serde_json::Value>,
     session_id: Option<&str>,
     created_at: i64,
+    saved_request: SavedRequest,
 ) -> Option<axum::response::Response> {
     // Load enabled keywords from DB.
     let conn = match state.db.open_connection() {
@@ -160,7 +174,6 @@ pub(super) async fn check_and_intercept(
         return None;
     }
 
-    // Extract searchable content and match.
     let searchable = domain::extract_searchable_content(introspection_json);
 
     tracing::info!(
@@ -177,7 +190,6 @@ pub(super) async fn check_and_intercept(
         return None;
     }
 
-    // Content snippet for review (first 500 chars).
     let snippet: String = searchable.chars().take(500).collect();
     let snippet_opt = if snippet.is_empty() {
         None
@@ -192,7 +204,6 @@ pub(super) async fn check_and_intercept(
         "keyword review: request intercepted"
     );
 
-    // Insert review log in DB.
     if let Err(err) = domain::review_log_insert(
         &conn,
         trace_id,
@@ -204,7 +215,6 @@ pub(super) async fn check_and_intercept(
         tracing::warn!("keyword review: failed to insert review log: {err}");
     }
 
-    // Insert pending review in registry.
     let rx = state.keyword_review_registry.insert(
         trace_id.to_string(),
         cli_key.to_string(),
@@ -213,21 +223,18 @@ pub(super) async fn check_and_intercept(
         created_at,
     );
 
-    // Emit event to frontend.
-    let event_payload = KeywordReviewEvent {
-        trace_id: trace_id.to_string(),
-        cli_key: cli_key.to_string(),
-        matched_keywords: matched.clone(),
-        request_snippet: snippet_opt.clone(),
-        created_at,
-    };
     crate::app::heartbeat_watchdog::gated_emit(
         &state.app,
         KEYWORD_REVIEW_EVENT_NAME,
-        event_payload,
+        KeywordReviewEvent {
+            trace_id: trace_id.to_string(),
+            cli_key: cli_key.to_string(),
+            matched_keywords: matched,
+            request_snippet: snippet_opt,
+            created_at,
+        },
     );
 
-    // Read timeout settings.
     let (timeout_secs, timeout_action) = match settings::read(&state.app) {
         Ok(cfg) => (
             cfg.keyword_review_timeout_seconds,
@@ -236,31 +243,39 @@ pub(super) async fn check_and_intercept(
         Err(_) => (300, settings::KeywordReviewTimeoutAction::Reject),
     };
 
-    // Build SSE heartbeat stream response.
     let response = build_review_sse_response(
         state.clone(),
         trace_id.to_string(),
         rx,
         timeout_secs,
         timeout_action,
+        saved_request,
     );
 
     Some(response)
 }
 
-/// Build an SSE response that sends heartbeat comments while waiting for a review decision.
 fn build_review_sse_response(
     state: GatewayAppState,
     trace_id: String,
     rx: oneshot::Receiver<ReviewDecision>,
     timeout_secs: u32,
     timeout_action: settings::KeywordReviewTimeoutAction,
+    saved_request: SavedRequest,
 ) -> axum::response::Response {
     let (body_tx, body_rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
 
-    // Spawn the heartbeat + decision loop.
     tokio::spawn(async move {
-        review_stream_loop(state, trace_id, rx, body_tx, timeout_secs, timeout_action).await;
+        review_stream_loop(
+            state,
+            trace_id,
+            rx,
+            body_tx,
+            timeout_secs,
+            timeout_action,
+            saved_request,
+        )
+        .await;
     });
 
     let body_stream = tokio_stream::wrappers::ReceiverStream::new(body_rx);
@@ -289,6 +304,7 @@ fn build_review_sse_response(
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 const HEARTBEAT_BYTES: &[u8] = b": aio-heartbeat\n\n";
 
+#[allow(clippy::too_many_arguments)]
 async fn review_stream_loop(
     state: GatewayAppState,
     trace_id: String,
@@ -296,6 +312,7 @@ async fn review_stream_loop(
     tx: tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
     timeout_secs: u32,
     timeout_action: settings::KeywordReviewTimeoutAction,
+    saved_request: SavedRequest,
 ) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs as u64);
 
@@ -304,8 +321,7 @@ async fn review_stream_loop(
         let sleep_duration = time_remaining.min(HEARTBEAT_INTERVAL);
 
         if sleep_duration.is_zero() {
-            // Timeout reached.
-            handle_timeout(&state, &trace_id, timeout_action, &tx).await;
+            handle_timeout(&state, &trace_id, timeout_action, &tx, saved_request).await;
             return;
         }
 
@@ -315,7 +331,7 @@ async fn review_stream_loop(
             result = &mut rx => {
                 match result {
                     Ok(ReviewDecision::Approve) => {
-                        handle_approved(&state, &trace_id, &tx).await;
+                        handle_approved(&state, &trace_id, &tx, saved_request).await;
                     }
                     Ok(ReviewDecision::Reject) | Err(_) => {
                         handle_rejected(&state, &trace_id, &tx).await;
@@ -325,15 +341,12 @@ async fn review_stream_loop(
             }
 
             _ = tokio::time::sleep(sleep_duration) => {
-                // Check if we've passed the deadline.
                 if tokio::time::Instant::now() >= deadline {
-                    handle_timeout(&state, &trace_id, timeout_action, &tx).await;
+                    handle_timeout(&state, &trace_id, timeout_action, &tx, saved_request).await;
                     return;
                 }
 
-                // Send heartbeat.
                 if tx.send(Ok(Bytes::from_static(HEARTBEAT_BYTES))).await.is_err() {
-                    // Client disconnected.
                     tracing::info!(trace_id = %trace_id, "keyword review: client disconnected during review wait");
                     state.keyword_review_registry.remove(&trace_id);
                     update_review_status(&state, &trace_id, "rejected");
@@ -348,21 +361,67 @@ async fn handle_approved(
     state: &GatewayAppState,
     trace_id: &str,
     tx: &tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
+    saved_request: SavedRequest,
 ) {
-    tracing::info!(trace_id = %trace_id, "keyword review: approved");
+    tracing::info!(trace_id = %trace_id, "keyword review: approved, forwarding via loopback");
     update_review_status(state, trace_id, "approved");
 
-    // Send an SSE comment indicating approval, then close the stream.
-    // The CLI will need to retry the request, which will now pass through without
-    // interception (the review log status is no longer pending).
-    //
-    // Note: For true seamless forwarding, we would need to reconstruct the full
-    // RequestContext and call forwarder::forward(), then pipe its response body
-    // through this stream. However, this is complex because the RequestContext
-    // requires all the data that proxy_impl computes. Instead, we send a
-    // standardized error that the CLI will retry automatically.
-    let approved_event = b"data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Request approved, retrying...\"}}\n\n";
-    let _ = tx.send(Ok(Bytes::from_static(approved_event))).await;
+    let loopback_url = build_loopback_url(
+        state.gateway_port,
+        &saved_request.cli_key,
+        &saved_request.forwarded_path,
+        saved_request.query.as_deref(),
+    );
+
+    let mut req_builder = state
+        .client
+        .request(saved_request.method, &loopback_url)
+        .header(BYPASS_HEADER, trace_id)
+        .body(saved_request.body_bytes);
+
+    for (name, value) in &saved_request.headers {
+        if name == header::HOST || name == header::CONTENT_LENGTH {
+            continue;
+        }
+        req_builder = req_builder.header(name, value);
+    }
+
+    let response = match req_builder.send().await {
+        Ok(resp) => resp,
+        Err(err) => {
+            tracing::error!(trace_id = %trace_id, "keyword review: loopback request failed: {err}");
+            let _ = tx
+                .send(Ok(Bytes::from(format!(
+                    "data: {{\"type\":\"error\",\"error\":{{\"type\":\"api_error\",\"message\":\"keyword review loopback failed: {err}\"}}}}\n\n"
+                ))))
+                .await;
+            return;
+        }
+    };
+
+    tracing::info!(
+        trace_id = %trace_id,
+        status = %response.status(),
+        "keyword review: loopback response received, piping to client"
+    );
+
+    // Pipe the upstream response body through our SSE stream.
+    use tokio_stream::StreamExt;
+    let mut byte_stream = response.bytes_stream();
+    while let Some(chunk_result) = byte_stream.next().await {
+        match chunk_result {
+            Ok(chunk) => {
+                if tx.send(Ok(chunk)).await.is_err() {
+                    tracing::info!(trace_id = %trace_id, "keyword review: client disconnected during loopback pipe");
+                    return;
+                }
+            }
+            Err(err) => {
+                tracing::warn!(trace_id = %trace_id, "keyword review: loopback stream error: {err}");
+                return;
+            }
+        }
+    }
 }
 
 async fn handle_rejected(
@@ -382,13 +441,14 @@ async fn handle_timeout(
     trace_id: &str,
     timeout_action: settings::KeywordReviewTimeoutAction,
     tx: &tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
+    saved_request: SavedRequest,
 ) {
     state.keyword_review_registry.remove(trace_id);
 
     match timeout_action {
         settings::KeywordReviewTimeoutAction::Approve => {
             tracing::info!(trace_id = %trace_id, "keyword review: timeout -> auto-approve");
-            handle_approved(state, trace_id, tx).await;
+            handle_approved(state, trace_id, tx, saved_request).await;
         }
         settings::KeywordReviewTimeoutAction::Reject => {
             tracing::info!(trace_id = %trace_id, "keyword review: timeout -> auto-reject");
@@ -397,6 +457,14 @@ async fn handle_timeout(
             let error_event = b"data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Request rejected: keyword review timed out.\"}}\n\n";
             let _ = tx.send(Ok(Bytes::from_static(error_event))).await;
         }
+    }
+}
+
+fn build_loopback_url(port: u16, cli_key: &str, path: &str, query: Option<&str>) -> String {
+    let base = format!("http://127.0.0.1:{port}/{cli_key}{path}");
+    match query {
+        Some(q) if !q.is_empty() => format!("{base}?{q}"),
+        _ => base,
     }
 }
 
@@ -480,5 +548,17 @@ mod tests {
 
         let pending = registry.list_pending();
         assert_eq!(pending.len(), 2);
+    }
+
+    #[test]
+    fn build_loopback_url_without_query() {
+        let url = build_loopback_url(37123, "codex", "/v1/responses", None);
+        assert_eq!(url, "http://127.0.0.1:37123/codex/v1/responses");
+    }
+
+    #[test]
+    fn build_loopback_url_with_query() {
+        let url = build_loopback_url(37123, "claude", "/v1/messages", Some("stream=true"));
+        assert_eq!(url, "http://127.0.0.1:37123/claude/v1/messages?stream=true");
     }
 }
