@@ -9,6 +9,7 @@ import {
   useKeywordReviewKeywordSetEnabledMutation,
   useKeywordReviewKeywordDeleteMutation,
 } from "../../query/keywordReview";
+import { useSettingsQuery, useSettingsSetMutation } from "../../query/settings";
 
 export function KeywordsTab() {
   const [newKeyword, setNewKeyword] = useState("");
@@ -16,6 +17,13 @@ export function KeywordsTab() {
   const addMutation = useKeywordReviewKeywordAddMutation();
   const setEnabledMutation = useKeywordReviewKeywordSetEnabledMutation();
   const deleteMutation = useKeywordReviewKeywordDeleteMutation();
+  const settingsQuery = useSettingsQuery();
+  const settingsMutation = useSettingsSetMutation();
+
+  const settings = settingsQuery.data;
+  const isEnabled = settings?.enable_keyword_review ?? false;
+  const timeoutSeconds = settings?.keyword_review_timeout_seconds ?? 300;
+  const timeoutAction = settings?.keyword_review_timeout_action ?? "reject";
 
   const handleAdd = () => {
     const trimmed = newKeyword.trim();
@@ -25,10 +33,99 @@ export function KeywordsTab() {
     });
   };
 
+  const handleToggleEnabled = (checked: boolean) => {
+    if (!settings) return;
+    settingsMutation.mutate({
+      preferredPort: settings.preferred_port,
+      autoStart: settings.auto_start,
+      logRetentionDays: settings.log_retention_days,
+      failoverMaxAttemptsPerProvider: settings.failover_max_attempts_per_provider,
+      failoverMaxProvidersToTry: settings.failover_max_providers_to_try,
+      enableKeywordReview: checked,
+    });
+  };
+
+  const handleTimeoutChange = (value: string) => {
+    const num = parseInt(value, 10);
+    if (isNaN(num) || num < 1 || num > 3600 || !settings) return;
+    settingsMutation.mutate({
+      preferredPort: settings.preferred_port,
+      autoStart: settings.auto_start,
+      logRetentionDays: settings.log_retention_days,
+      failoverMaxAttemptsPerProvider: settings.failover_max_attempts_per_provider,
+      failoverMaxProvidersToTry: settings.failover_max_providers_to_try,
+      keywordReviewTimeoutSeconds: num,
+    });
+  };
+
+  const handleTimeoutActionChange = (action: "approve" | "reject") => {
+    if (!settings) return;
+    settingsMutation.mutate({
+      preferredPort: settings.preferred_port,
+      autoStart: settings.auto_start,
+      logRetentionDays: settings.log_retention_days,
+      failoverMaxAttemptsPerProvider: settings.failover_max_attempts_per_provider,
+      failoverMaxProvidersToTry: settings.failover_max_providers_to_try,
+      keywordReviewTimeoutAction: action,
+    });
+  };
+
   const keywords = keywordsQuery.data ?? [];
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
+      {/* Settings Section */}
+      <div className="rounded-lg border p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium">启用关键词审核</div>
+            <div className="text-xs text-muted-foreground">
+              开启后，包含敏感词的请求将被拦截等待审批
+            </div>
+          </div>
+          <Switch
+            checked={isEnabled}
+            onCheckedChange={handleToggleEnabled}
+            disabled={settingsMutation.isPending}
+          />
+        </div>
+
+        {isEnabled && (
+          <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">审批超时：</span>
+              <Input
+                type="number"
+                min={1}
+                max={3600}
+                value={timeoutSeconds}
+                onChange={(e) => handleTimeoutChange(e.target.value)}
+                className="w-20 h-8"
+              />
+              <span className="text-muted-foreground">秒</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">超时后：</span>
+              <Button
+                variant={timeoutAction === "reject" ? "primary" : "ghost"}
+                size="sm"
+                onClick={() => handleTimeoutActionChange("reject")}
+              >
+                自动拒绝
+              </Button>
+              <Button
+                variant={timeoutAction === "approve" ? "primary" : "ghost"}
+                size="sm"
+                onClick={() => handleTimeoutActionChange("approve")}
+              >
+                自动放行
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Keyword Management */}
       <div className="flex gap-2">
         <Input
           value={newKeyword}

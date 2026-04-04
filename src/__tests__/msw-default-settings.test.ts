@@ -6,7 +6,7 @@ describe("MSW defaults", () => {
     resetMswState();
 
     expect(getSettingsState()).toEqual({
-      schema_version: 29,
+      schema_version: 30,
       preferred_port: 37123,
       show_home_heatmap: true,
       show_home_usage: true,
@@ -63,6 +63,9 @@ describe("MSW defaults", () => {
       cx2cc_drop_stop_sequences: true,
       cx2cc_clean_schema: true,
       cx2cc_filter_batch_tool: true,
+      enable_keyword_review: false,
+      keyword_review_timeout_seconds: 300,
+      keyword_review_timeout_action: "reject",
     });
   });
 });

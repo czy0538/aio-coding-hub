@@ -63,6 +63,9 @@ export function createTestAppSettings(overrides?: Partial<AppSettings>): AppSett
     cx2cc_drop_stop_sequences: true,
     cx2cc_clean_schema: true,
     cx2cc_filter_batch_tool: true,
+    enable_keyword_review: false,
+    keyword_review_timeout_seconds: 300,
+    keyword_review_timeout_action: "reject",
     ...overrides,
   };
 }

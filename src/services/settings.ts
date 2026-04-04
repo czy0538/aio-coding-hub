@@ -73,6 +73,9 @@ export type AppSettings = {
   cx2cc_drop_stop_sequences: boolean;
   cx2cc_clean_schema: boolean;
   cx2cc_filter_batch_tool: boolean;
+  enable_keyword_review: boolean;
+  keyword_review_timeout_seconds: number;
+  keyword_review_timeout_action: "approve" | "reject";
 };
 
 export type SettingsSetInput = {
@@ -128,6 +131,9 @@ export type SettingsSetInput = {
   cx2ccDropStopSequences?: boolean;
   cx2ccCleanSchema?: boolean;
   cx2ccFilterBatchTool?: boolean;
+  enableKeywordReview?: boolean;
+  keywordReviewTimeoutSeconds?: number;
+  keywordReviewTimeoutAction?: "approve" | "reject";
 };
 
 export async function settingsGet() {
