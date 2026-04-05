@@ -437,6 +437,51 @@ CREATE TABLE keyword_review_logs (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE prompts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE mcp_servers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  server_key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  transport TEXT NOT NULL,
+  command TEXT,
+  args_json TEXT NOT NULL DEFAULT '[]',
+  env_json TEXT NOT NULL DEFAULT '{}',
+  cwd TEXT,
+  url TEXT,
+  headers_json TEXT NOT NULL DEFAULT '{}',
+  enabled_claude INTEGER NOT NULL DEFAULT 0,
+  enabled_codex INTEGER NOT NULL DEFAULT 0,
+  enabled_gemini INTEGER NOT NULL DEFAULT 0,
+  normalized_name TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE skills (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  skill_key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  normalized_name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  source_git_url TEXT NOT NULL,
+  source_branch TEXT NOT NULL,
+  source_subdir TEXT NOT NULL,
+  enabled_claude INTEGER NOT NULL DEFAULT 0,
+  enabled_codex INTEGER NOT NULL DEFAULT 0,
+  enabled_gemini INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 PRAGMA user_version = 31;
 "#,
     )
