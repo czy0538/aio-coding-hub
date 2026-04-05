@@ -614,6 +614,7 @@ mod tests {
             Some("sess-1".to_string()),
             vec!["password".to_string()],
             Some("snippet".to_string()),
+            None,
             1000,
         );
 
