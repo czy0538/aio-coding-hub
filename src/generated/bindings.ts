@@ -104,6 +104,9 @@ export type AppSettings = {
   cx2cc_drop_stop_sequences: boolean;
   cx2cc_clean_schema: boolean;
   cx2cc_filter_batch_tool: boolean;
+  enable_keyword_review: boolean;
+  keyword_review_timeout_seconds: number;
+  keyword_review_timeout_action: KeywordReviewTimeoutAction;
 };
 export type ClaudeModels = {
   main_model?: string | null;
@@ -116,6 +119,7 @@ export type CodexHomeMode = "user_home_default" | "follow_codex_home" | "custom"
 export type DailyResetMode = "fixed" | "rolling";
 export type GatewayListenMode = "localhost" | "wsl_auto" | "lan" | "custom";
 export type HomeUsagePeriod = "last7" | "last15" | "last30" | "month";
+export type KeywordReviewTimeoutAction = "approve" | "reject";
 export type ProviderAuthMode = "api_key" | "oauth";
 export type ProviderBaseUrlMode = "order" | "ping";
 export type ProviderSummary = {
@@ -229,6 +233,9 @@ export type SettingsUpdate = {
   cx2CcDropStopSequences: boolean | null;
   cx2CcCleanSchema: boolean | null;
   cx2CcFilterBatchTool: boolean | null;
+  enableKeywordReview: boolean | null;
+  keywordReviewTimeoutSeconds: number | null;
+  keywordReviewTimeoutAction: KeywordReviewTimeoutAction | null;
 };
 export type WslHostAddressMode = "auto" | "custom";
 export type WslTargetCli = { claude: boolean; codex: boolean; gemini: boolean };
