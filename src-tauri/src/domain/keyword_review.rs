@@ -18,6 +18,24 @@ pub struct KeywordEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct KeywordEvidenceLine {
+    pub line_number: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct KeywordEvidenceSnippet {
+    pub keyword: String,
+    pub hit_line_number: i64,
+    pub lines: Vec<KeywordEvidenceLine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct ClearKeywordReviewLogsResult {
+    pub keyword_review_logs_deleted: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct KeywordReviewLog {
     pub id: i64,
     pub trace_id: String,
@@ -25,6 +43,7 @@ pub struct KeywordReviewLog {
     pub session_id: Option<String>,
     pub matched_keywords: Vec<String>,
     pub request_snippet: Option<String>,
+    pub keyword_evidence: Option<Vec<KeywordEvidenceSnippet>>,
     pub status: String,
     pub reviewer_action_at: Option<i64>,
     pub created_at: i64,
@@ -46,6 +65,8 @@ fn row_to_review_log(row: &rusqlite::Row<'_>) -> Result<KeywordReviewLog, rusqli
     let matched_json: String = row.get("matched_keywords")?;
     let matched: Vec<String> =
         serde_json::from_str(&matched_json).unwrap_or_else(|_| vec![matched_json.clone()]);
+    let keyword_evidence_json: Option<String> = row.get("keyword_evidence")?;
+    let keyword_evidence = keyword_evidence_json.and_then(|json| serde_json::from_str(&json).ok());
     Ok(KeywordReviewLog {
         id: row.get("id")?,
         trace_id: row.get("trace_id")?,
@@ -53,6 +74,7 @@ fn row_to_review_log(row: &rusqlite::Row<'_>) -> Result<KeywordReviewLog, rusqli
         session_id: row.get("session_id")?,
         matched_keywords: matched,
         request_snippet: row.get("request_snippet")?,
+        keyword_evidence,
         status: row.get("status")?,
         reviewer_action_at: row.get("reviewer_action_at")?,
         created_at: row.get("created_at")?,
@@ -186,16 +208,36 @@ pub fn review_log_insert(
     session_id: Option<&str>,
     matched_keywords: &[String],
     request_snippet: Option<&str>,
+    keyword_evidence: Option<&[KeywordEvidenceSnippet]>,
 ) -> crate::shared::error::AppResult<i64> {
     let now = now_unix_seconds();
     let matched_json = serde_json::to_string(matched_keywords).unwrap_or_else(|_| "[]".to_string());
+    let keyword_evidence_json = keyword_evidence
+        .map(|value| serde_json::to_string(value).unwrap_or_else(|_| "[]".to_string()));
 
     conn.execute(
         r#"
-INSERT INTO keyword_review_logs (trace_id, cli_key, session_id, matched_keywords, request_snippet, status, created_at)
-VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)
+INSERT INTO keyword_review_logs (
+    trace_id,
+    cli_key,
+    session_id,
+    matched_keywords,
+    request_snippet,
+    keyword_evidence,
+    status,
+    created_at
+)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7)
 "#,
-        params![trace_id, cli_key, session_id, matched_json, request_snippet, now],
+        params![
+            trace_id,
+            cli_key,
+            session_id,
+            matched_json,
+            request_snippet,
+            keyword_evidence_json,
+            now
+        ],
     )
     .map_err(|e| db_err!("failed to insert review log: {e}"))?;
 
@@ -225,7 +267,7 @@ pub fn review_logs_list(
     let mut stmt = conn
         .prepare_cached(
             r#"
-SELECT id, trace_id, cli_key, session_id, matched_keywords, request_snippet, status, reviewer_action_at, created_at
+SELECT id, trace_id, cli_key, session_id, matched_keywords, request_snippet, keyword_evidence, status, reviewer_action_at, created_at
 FROM keyword_review_logs
 ORDER BY id DESC
 LIMIT ?1 OFFSET ?2
@@ -242,6 +284,37 @@ LIMIT ?1 OFFSET ?2
         items.push(row.map_err(|e| db_err!("failed to read review log row: {e}"))?);
     }
     Ok(items)
+}
+
+pub fn review_logs_clear_all(
+    db: &db::Db,
+) -> crate::shared::error::AppResult<ClearKeywordReviewLogsResult> {
+    tracing::warn!("clearing all keyword review logs (user-initiated)");
+
+    let mut conn = db.open_connection()?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| db_err!("failed to start transaction: {e}"))?;
+
+    let deleted = tx
+        .execute("DELETE FROM keyword_review_logs", [])
+        .map_err(|e| db_err!("failed to clear keyword_review_logs: {e}"))?;
+
+    tx.commit()
+        .map_err(|e| db_err!("failed to commit transaction: {e}"))?;
+
+    tracing::warn!(
+        keyword_review_logs_deleted = deleted,
+        "keyword review logs cleared"
+    );
+
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    let _ = conn.execute_batch("VACUUM;");
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
+    Ok(ClearKeywordReviewLogsResult {
+        keyword_review_logs_deleted: deleted as u64,
+    })
 }
 
 /// Mark stale pending reviews (older than `cutoff_unix`) as "timeout".
@@ -261,6 +334,102 @@ pub fn review_log_timeout_stale(
 }
 
 // ── Matching Engine ──
+
+fn truncate_line_for_evidence(line: &str, keyword: &str, max_chars: usize) -> String {
+    if line.is_empty() {
+        return String::new();
+    }
+
+    let max_chars = max_chars.max(40);
+    let line_chars: Vec<char> = line.chars().collect();
+    if line_chars.len() <= max_chars {
+        return line.to_string();
+    }
+
+    let keyword_chars: Vec<char> = keyword.chars().collect();
+    if keyword_chars.is_empty() {
+        return line_chars[..max_chars].iter().collect();
+    }
+
+    let line_lower = line.to_lowercase();
+    let keyword_lower = keyword.to_lowercase();
+    let match_start_char = line_lower
+        .find(&keyword_lower)
+        .map(|byte_idx| line_lower[..byte_idx].chars().count())
+        .unwrap_or(0);
+    let match_len = keyword_chars.len();
+    let desired_start = match_start_char.saturating_sub(max_chars / 3);
+    let mut start = desired_start.min(line_chars.len().saturating_sub(max_chars));
+    let mut end = (start + max_chars).min(line_chars.len());
+
+    if match_start_char + match_len > end {
+        end = (match_start_char + match_len).min(line_chars.len());
+        start = end.saturating_sub(max_chars);
+    }
+
+    let mut out = String::new();
+    if start > 0 {
+        out.push('…');
+    }
+    out.push_str(&line_chars[start..end].iter().collect::<String>());
+    if end < line_chars.len() {
+        out.push('…');
+    }
+    out
+}
+
+pub fn build_keyword_evidence(
+    content: &str,
+    matched_keywords: &[String],
+) -> Vec<KeywordEvidenceSnippet> {
+    const MAX_SNIPPETS: usize = 5;
+    const CONTEXT_RADIUS: usize = 1;
+    const MAX_LINE_CHARS: usize = 240;
+
+    if content.trim().is_empty() || matched_keywords.is_empty() {
+        return Vec::new();
+    }
+
+    let lines: Vec<&str> = content.split('\n').collect();
+    let mut out = Vec::new();
+
+    for keyword in matched_keywords
+        .iter()
+        .filter(|kw| !kw.is_empty())
+        .take(MAX_SNIPPETS)
+    {
+        let keyword_lower = keyword.to_lowercase();
+        let Some(hit_index) = lines
+            .iter()
+            .position(|line| line.to_lowercase().contains(&keyword_lower))
+        else {
+            continue;
+        };
+
+        let start = hit_index.saturating_sub(CONTEXT_RADIUS);
+        let end = (hit_index + CONTEXT_RADIUS + 1).min(lines.len());
+        let evidence_lines = lines[start..end]
+            .iter()
+            .enumerate()
+            .map(|(offset, line)| {
+                let absolute_index = start + offset;
+                let display_text = truncate_line_for_evidence(line, keyword, MAX_LINE_CHARS);
+                KeywordEvidenceLine {
+                    line_number: (absolute_index + 1) as i64,
+                    text: display_text,
+                }
+            })
+            .collect();
+
+        out.push(KeywordEvidenceSnippet {
+            keyword: keyword.clone(),
+            hit_line_number: (hit_index + 1) as i64,
+            lines: evidence_lines,
+        });
+    }
+
+    out
+}
 
 /// Match content against enabled keywords (case-insensitive substring match).
 /// Returns the list of matched keyword strings.
@@ -580,6 +749,48 @@ mod tests {
         let content = extract_searchable_content(Some(&json));
         assert!(content.contains("message with 敏感词"));
         assert!(content.contains("system prompt here"));
+    }
+
+    #[test]
+    fn build_keyword_evidence_extracts_context_lines() {
+        let content = "line 1\nline 2\ncontains mIngAnCi here\nline 4\nline 5";
+        let evidence = build_keyword_evidence(content, &["minganci".to_string()]);
+
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].keyword, "minganci");
+        assert_eq!(evidence[0].hit_line_number, 3);
+        assert_eq!(evidence[0].lines.len(), 3);
+        assert_eq!(evidence[0].lines[0].line_number, 2);
+        assert_eq!(evidence[0].lines[1].line_number, 3);
+        assert!(evidence[0].lines[1]
+            .text
+            .to_lowercase()
+            .contains("minganci"));
+    }
+
+    #[test]
+    fn build_keyword_evidence_limits_long_line_around_hit() {
+        let content = format!(
+            "prefix {} middle mIngAnCi suffix {}",
+            "a".repeat(220),
+            "b".repeat(220)
+        );
+        let evidence = build_keyword_evidence(&content, &["minganci".to_string()]);
+
+        assert_eq!(evidence.len(), 1);
+        let hit_line = &evidence[0].lines[0].text;
+        assert!(hit_line.to_lowercase().contains("minganci"));
+        assert!(hit_line.starts_with('…') || hit_line.ends_with('…'));
+    }
+
+    #[test]
+    fn build_keyword_evidence_preserves_keyword_order() {
+        let content = "alpha hit\nsecond line with beta";
+        let evidence = build_keyword_evidence(content, &["beta".to_string(), "alpha".to_string()]);
+
+        assert_eq!(evidence.len(), 2);
+        assert_eq!(evidence[0].keyword, "beta");
+        assert_eq!(evidence[1].keyword, "alpha");
     }
 
     #[test]

@@ -6,6 +6,7 @@ import {
   keywordReviewKeywordSetEnabled,
   keywordReviewKeywordDelete,
   keywordReviewLogsList,
+  keywordReviewLogsClearAll,
   keywordReviewDecide,
   keywordReviewPendingList,
 } from "../services/keywordReview";
@@ -46,6 +47,16 @@ export function useKeywordReviewLogsQuery(limit: number, offset: number) {
   return useQuery({
     queryKey: keywordReviewKeys.logs(limit, offset),
     queryFn: () => keywordReviewLogsList(limit, offset),
+  });
+}
+
+export function useKeywordReviewLogsClearAllMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => keywordReviewLogsClearAll(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keywordReviewKeys.all });
+    },
   });
 }
 

@@ -41,6 +41,7 @@ pub struct PendingReviewSnapshot {
     pub session_id: Option<String>,
     pub matched_keywords: Vec<String>,
     pub request_snippet: Option<String>,
+    pub keyword_evidence: Option<Vec<domain::KeywordEvidenceSnippet>>,
     pub created_at: i64,
 }
 
@@ -50,6 +51,7 @@ struct PendingReviewEntry {
     session_id: Option<String>,
     matched_keywords: Vec<String>,
     request_snippet: Option<String>,
+    keyword_evidence: Option<Vec<domain::KeywordEvidenceSnippet>>,
     created_at: i64,
 }
 
@@ -77,6 +79,7 @@ impl PendingReviewRegistry {
         session_id: Option<String>,
         matched_keywords: Vec<String>,
         request_snippet: Option<String>,
+        keyword_evidence: Option<Vec<domain::KeywordEvidenceSnippet>>,
         created_at: i64,
     ) -> oneshot::Receiver<ReviewDecision> {
         let (tx, rx) = oneshot::channel();
@@ -86,6 +89,7 @@ impl PendingReviewRegistry {
             session_id,
             matched_keywords,
             request_snippet,
+            keyword_evidence,
             created_at,
         };
         let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -157,6 +161,7 @@ impl PendingReviewRegistry {
                 session_id: entry.session_id.clone(),
                 matched_keywords: entry.matched_keywords.clone(),
                 request_snippet: entry.request_snippet.clone(),
+                keyword_evidence: entry.keyword_evidence.clone(),
                 created_at: entry.created_at,
             })
             .collect()
@@ -173,6 +178,7 @@ pub(super) struct KeywordReviewEvent {
     pub(super) cli_key: String,
     pub(super) matched_keywords: Vec<String>,
     pub(super) request_snippet: Option<String>,
+    pub(super) keyword_evidence: Option<Vec<domain::KeywordEvidenceSnippet>>,
     pub(super) created_at: i64,
 }
 
@@ -290,6 +296,13 @@ pub(super) async fn check_and_intercept(
         return None;
     }
 
+    let keyword_evidence = domain::build_keyword_evidence(&searchable, &matched);
+    let keyword_evidence_opt = if keyword_evidence.is_empty() {
+        None
+    } else {
+        Some(keyword_evidence)
+    };
+
     let snippet: String = searchable.chars().take(500).collect();
     let snippet_opt = if snippet.is_empty() {
         None
@@ -311,6 +324,7 @@ pub(super) async fn check_and_intercept(
         session_id,
         &matched,
         snippet_opt.as_deref(),
+        keyword_evidence_opt.as_deref(),
     ) {
         tracing::warn!("keyword review: failed to insert review log: {err}");
     }
@@ -321,6 +335,7 @@ pub(super) async fn check_and_intercept(
         session_id_for_review,
         matched.clone(),
         snippet_opt.clone(),
+        keyword_evidence_opt.clone(),
         created_at,
     );
 
@@ -332,6 +347,7 @@ pub(super) async fn check_and_intercept(
             cli_key: cli_key.to_string(),
             matched_keywords: matched,
             request_snippet: snippet_opt,
+            keyword_evidence: keyword_evidence_opt,
             created_at,
         },
     );

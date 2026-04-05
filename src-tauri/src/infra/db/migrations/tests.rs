@@ -418,6 +418,47 @@ PRAGMA user_version = 29;
 }
 
 #[test]
+fn ensure_patch_adds_keyword_review_log_evidence_column_for_existing_schema() {
+    let mut conn = Connection::open_in_memory().expect("open in-memory sqlite");
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable foreign_keys");
+
+    conn.execute_batch(
+        r#"
+CREATE TABLE keyword_review_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trace_id TEXT NOT NULL,
+  cli_key TEXT NOT NULL,
+  session_id TEXT,
+  matched_keywords TEXT NOT NULL,
+  request_snippet TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  reviewer_action_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+PRAGMA user_version = 31;
+"#,
+    )
+    .expect("create legacy keyword_review_logs schema");
+
+    assert!(!test_has_column(
+        &conn,
+        "keyword_review_logs",
+        "keyword_evidence"
+    ));
+
+    apply_migrations(&mut conn).expect("apply migrations");
+    assert!(test_has_column(
+        &conn,
+        "keyword_review_logs",
+        "keyword_evidence"
+    ));
+
+    apply_migrations(&mut conn).expect("apply migrations twice");
+}
+
+#[test]
 fn ensure_patch_backfills_oauth_columns_for_legacy_v30_schema() {
     let mut conn = Connection::open_in_memory().expect("open in-memory sqlite");
     conn.execute_batch("PRAGMA foreign_keys = ON;")

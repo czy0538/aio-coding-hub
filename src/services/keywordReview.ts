@@ -10,6 +10,17 @@ export type KeywordEntry = {
   updated_at: number;
 };
 
+export type KeywordEvidenceLine = {
+  line_number: number;
+  text: string;
+};
+
+export type KeywordEvidenceSnippet = {
+  keyword: string;
+  hit_line_number: number;
+  lines: KeywordEvidenceLine[];
+};
+
 export type KeywordReviewLog = {
   id: number;
   trace_id: string;
@@ -17,6 +28,7 @@ export type KeywordReviewLog = {
   session_id: string | null;
   matched_keywords: string[];
   request_snippet: string | null;
+  keyword_evidence: KeywordEvidenceSnippet[] | null;
   status: "pending" | "approved" | "rejected" | "timeout";
   reviewer_action_at: number | null;
   created_at: number;
@@ -27,7 +39,12 @@ export type PendingReviewSnapshot = {
   cli_key: string;
   matched_keywords: string[];
   request_snippet: string | null;
+  keyword_evidence: KeywordEvidenceSnippet[] | null;
   created_at: number;
+};
+
+export type ClearKeywordReviewLogsResult = {
+  keyword_review_logs_deleted: number;
 };
 
 // ── Service Functions ──
@@ -71,6 +88,13 @@ export function keywordReviewLogsList(limit: number, offset: number): Promise<Ke
     title: "获取审核日志失败",
     cmd: "keyword_review_logs_list",
     args: { limit, offset },
+  });
+}
+
+export function keywordReviewLogsClearAll(): Promise<ClearKeywordReviewLogsResult> {
+  return invokeServiceCommand({
+    title: "清空审核日志失败",
+    cmd: "keyword_review_logs_clear_all",
   });
 }
 

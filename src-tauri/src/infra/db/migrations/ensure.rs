@@ -20,6 +20,7 @@ pub(super) fn apply_ensure_patches(conn: &mut Connection) -> crate::shared::erro
     ensure_provider_bridge_type(conn)?;
     ensure_request_logs_extended_columns(conn)?;
     ensure_provider_stream_idle_timeout(conn)?;
+    ensure_keyword_review_log_evidence(conn)?;
     Ok(())
 }
 
@@ -795,6 +796,37 @@ fn ensure_provider_stream_idle_timeout(conn: &mut Connection) -> Result<(), Stri
         )
         .map_err(|e| format!("failed to ensure providers.stream_idle_timeout_seconds: {e}"))?;
     }
+    Ok(())
+}
+
+fn ensure_keyword_review_log_evidence(conn: &mut Connection) -> Result<(), String> {
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("failed to start sqlite transaction: {e}"))?;
+
+    let has_table: bool = tx
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'keyword_review_logs' LIMIT 1",
+            [],
+            |_| Ok(true),
+        )
+        .optional()
+        .map_err(|e| format!("failed to query sqlite_master: {e}"))?
+        .unwrap_or(false);
+
+    if !has_table {
+        tx.commit()
+            .map_err(|e| format!("failed to commit sqlite transaction: {e}"))?;
+        return Ok(());
+    }
+
+    if !column_exists(&tx, "keyword_review_logs", "keyword_evidence")? {
+        tx.execute_batch("ALTER TABLE keyword_review_logs ADD COLUMN keyword_evidence TEXT;")
+            .map_err(|e| format!("failed to ensure keyword_review_logs.keyword_evidence: {e}"))?;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit sqlite transaction: {e}"))?;
     Ok(())
 }
 

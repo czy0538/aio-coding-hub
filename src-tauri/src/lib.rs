@@ -448,6 +448,7 @@ pub fn run() {
             keyword_review_keyword_set_enabled,
             keyword_review_keyword_delete,
             keyword_review_logs_list,
+            keyword_review_logs_clear_all,
             keyword_review_decide,
             keyword_review_pending_list,
         ])

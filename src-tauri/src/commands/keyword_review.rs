@@ -85,6 +85,20 @@ pub(crate) async fn keyword_review_logs_list(
 
 #[tauri::command]
 #[specta::specta]
+pub(crate) async fn keyword_review_logs_clear_all(
+    app: tauri::AppHandle,
+    db_state: tauri::State<'_, DbInitState>,
+) -> Result<domain::ClearKeywordReviewLogsResult, String> {
+    let db = ensure_db_ready(app, &db_state).await?;
+    blocking::run("keyword_review_logs_clear_all", move || {
+        domain::review_logs_clear_all(&db)
+    })
+    .await
+    .map_err(Into::into)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub(crate) async fn keyword_review_decide(
     state: tauri::State<'_, GatewayState>,
     trace_id: String,
