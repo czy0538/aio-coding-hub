@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { ProviderSummary } from "../../services/providers";
@@ -16,7 +17,7 @@ export type SortableModeProviderRowProps = {
   onRemove: (providerId: number) => void;
 };
 
-export function SortableModeProviderRow({
+export const SortableModeProviderRow = memo(function SortableModeProviderRow({
   providerId,
   provider,
   modeEnabled,
@@ -94,4 +95,4 @@ export function SortableModeProviderRow({
       </Card>
     </div>
   );
-}
+});

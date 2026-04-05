@@ -102,6 +102,15 @@ export function UpdateDialog() {
           ) : null}
         </div>
 
+        {updateCandidate?.body ? (
+          <div className="space-y-1">
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">更新日志</span>
+            <div className="max-h-60 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
+              {updateCandidate.body}
+            </div>
+          </div>
+        ) : null}
+
         {!updateCandidate ? (
           <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-sm text-slate-700 dark:text-slate-300">
             未发现可安装更新。

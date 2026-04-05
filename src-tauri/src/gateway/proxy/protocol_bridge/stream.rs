@@ -84,7 +84,22 @@ where
             return Self::new(upstream, false, None, dummy_ctx);
         }
 
-        let bridge = super::registry::get_bridge("cx2cc").expect("cx2cc bridge must be registered");
+        let bridge = match super::registry::get_bridge("cx2cc") {
+            Some(b) => b,
+            None => {
+                tracing::error!("cx2cc bridge not found in registry; falling back to passthrough");
+                let dummy_ctx = BridgeContext {
+                    claude_models: crate::domain::providers::ClaudeModels::default(),
+                    cx2cc_settings: crate::gateway::proxy::cx2cc::settings::Cx2ccSettings::default(
+                    ),
+                    requested_model: None,
+                    mapped_model: None,
+                    stream_requested: false,
+                    is_chatgpt_backend: false,
+                };
+                return Self::new(upstream, false, None, dummy_ctx);
+            }
+        };
         let translator = StreamTranslatorOwned {
             inbound: bridge.inbound,
             outbound: bridge.outbound,

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -116,7 +116,7 @@ export type SortableProviderCardProps = {
   onDelete: (provider: ProviderSummary) => void;
 };
 
-export function SortableProviderCard({
+export const SortableProviderCard = memo(function SortableProviderCard({
   provider,
   sourceProviderName = null,
   circuit,
@@ -534,4 +534,4 @@ export function SortableProviderCard({
       </Card>
     </div>
   );
-}
+});

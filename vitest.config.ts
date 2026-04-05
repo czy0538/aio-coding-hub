@@ -36,6 +36,7 @@ export default defineConfig({
         "**/__tests__/**",
         "**/*.{test,spec}.{ts,tsx}",
         "src/components/ClaudeModelValidation*.tsx",
+        "src/components/claude-model-validation/**",
         "src/services/claudeModelValidation*.ts",
         "src/services/claudeValidationTemplates.ts",
         "src/test/**",

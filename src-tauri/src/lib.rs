@@ -242,6 +242,19 @@ pub fn run() {
 
                 crate::app::heartbeat_watchdog::gated_emit(&app_handle, crate::gateway::events::GATEWAY_STATUS_EVENT_NAME, status.clone());
 
+                // Re-apply CLI proxy config to match the (potentially new) gateway address.
+                // On clean exit, `restore_cli_proxy_keep_state` reverts config files to direct
+                // mode while keeping `manifest.enabled = true`.  Without this sync the frontend
+                // sees `applied_to_current_gateway = false` and shows a spurious "修复" button.
+                if let Some(base_origin) = status.base_url.as_deref() {
+                    let app_for_sync = app_handle.clone();
+                    let base_origin = base_origin.to_string();
+                    let _ = blocking::run("cli_proxy_sync_enabled_after_autostart", move || {
+                        cli_proxy::sync_enabled(&app_for_sync, &base_origin, true)
+                    })
+                    .await;
+                }
+
                 // WSL auto-detect and auto-configure (Windows only, gated by wsl_auto_config)
                 #[cfg(windows)]
                 {

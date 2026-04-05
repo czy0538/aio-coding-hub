@@ -1,5 +1,6 @@
 // Usage: 用量排行表格 — 支持费用占比、$/1K Token 列。
 
+import { memo } from "react";
 import type { UsageSummary, UsageLeaderboardRow } from "../../services/usage";
 import {
   formatDurationMs,
@@ -83,7 +84,7 @@ function UsageLeaderboardEmptyRow({
   );
 }
 
-function UsageLeaderboardDataRow({
+const UsageLeaderboardDataRow = memo(function UsageLeaderboardDataRow({
   index,
   row,
   totalCostUsd,
@@ -133,7 +134,7 @@ function UsageLeaderboardDataRow({
       <td className={MONO_TD}>{formatTokensPerSecond(row.avg_output_tokens_per_second)}</td>
     </tr>
   );
-}
+});
 
 function UsageLeaderboardSummaryRow({
   summary,

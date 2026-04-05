@@ -198,7 +198,7 @@ export function CliManagerGeneralTab({
                 </SettingsRow>
                 <SettingsRow
                   label="Billing Header 整流器"
-                  subtitle="自动移除 Claude 请求里的 billing header system 块。"
+                  subtitle="自动移除 Claude 请求里的 billing header system 块。适合OAuth用户"
                 >
                   <Switch
                     checked={rectifier.enable_billing_header_rectifier}

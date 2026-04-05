@@ -1126,3 +1126,67 @@ fn merge_restore_codex_config_preserves_user_changes() {
     assert!(result.contains("[user_section]"));
     assert!(result.contains("foo = \"bar\""));
 }
+
+/// Simulates the app lifecycle that causes the "修复" button to appear:
+///
+/// 1. Enable proxy → config files point to gateway
+/// 2. `restore_enabled_keep_state` (exit cleanup) → config files restored to direct mode,
+///    but manifest still has `enabled = true`
+/// 3. `status_all` with the same gateway origin → `applied_to_current_gateway == false`
+///    (this is the drifted state that shows the "修复" button)
+/// 4. `sync_enabled` (the fix) → config files re-applied
+/// 5. `status_all` → `applied_to_current_gateway == true` (drift resolved)
+#[test]
+fn sync_enabled_resolves_drift_after_restore_enabled_keep_state() {
+    let app = CliProxyTestApp::new();
+    let handle = app.handle();
+    let base_origin = "http://127.0.0.1:37123";
+
+    // Step 1: Enable the codex proxy so config files point to the gateway.
+    let enable_result = set_enabled(&handle, "codex", true, base_origin).expect("enable");
+    assert!(enable_result.ok, "enable should succeed: {enable_result:?}");
+
+    // Verify proxy is applied.
+    let rows = status_all(&handle, Some(base_origin)).expect("status_all after enable");
+    let codex = rows.iter().find(|r| r.cli_key == "codex").expect("codex");
+    assert_eq!(codex.applied_to_current_gateway, Some(true));
+
+    // Step 2: Simulate exit cleanup — restores config to direct mode, keeps enabled=true.
+    let restore_results = restore_enabled_keep_state(&handle).expect("restore");
+    let codex_restore = restore_results
+        .iter()
+        .find(|r| r.cli_key == "codex")
+        .expect("codex restore");
+    assert!(
+        codex_restore.ok,
+        "restore should succeed: {codex_restore:?}"
+    );
+
+    // Step 3: After restore, status_all should report drift (the bug scenario).
+    let rows = status_all(&handle, Some(base_origin)).expect("status_all after restore");
+    let codex = rows.iter().find(|r| r.cli_key == "codex").expect("codex");
+    assert!(codex.enabled, "manifest should still be enabled");
+    assert_eq!(
+        codex.applied_to_current_gateway,
+        Some(false),
+        "config was restored to direct mode, so drift is expected"
+    );
+
+    // Step 4: sync_enabled (the fix applied at autostart) should re-apply proxy config.
+    let sync_results = sync_enabled(&handle, base_origin, true).expect("sync");
+    let codex_sync = sync_results
+        .iter()
+        .find(|r| r.cli_key == "codex")
+        .expect("codex sync");
+    assert!(codex_sync.ok, "sync should succeed: {codex_sync:?}");
+
+    // Step 5: Drift should now be resolved.
+    let rows = status_all(&handle, Some(base_origin)).expect("status_all after sync");
+    let codex = rows.iter().find(|r| r.cli_key == "codex").expect("codex");
+    assert!(codex.enabled);
+    assert_eq!(
+        codex.applied_to_current_gateway,
+        Some(true),
+        "sync_enabled should resolve the drift"
+    );
+}

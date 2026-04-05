@@ -33,7 +33,7 @@ docs/
 .ace-tool/
 check-doc/
 AGENTS.md
-coverage/
+coverage*/
 .cursor/
 .trellis/
 .agents/

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   useMcpImportFromWorkspaceCliMutation,
@@ -47,32 +47,43 @@ export function McpServersView({ workspaceId }: McpServersViewProps) {
     toast("加载失败：请查看控制台日志");
   }, [mcpServersQuery.error]);
 
-  async function toggleEnabled(server: McpServerSummary) {
-    if (toggling) return;
-    const nextEnabled = !server.enabled;
+  const toggleEnabled = useCallback(
+    async (server: McpServerSummary) => {
+      if (toggleMutation.isPending) return;
+      const nextEnabled = !server.enabled;
 
-    try {
-      const next = await toggleMutation.mutateAsync({ serverId: server.id, enabled: nextEnabled });
-      if (!next) {
-        return;
+      try {
+        const next = await toggleMutation.mutateAsync({
+          serverId: server.id,
+          enabled: nextEnabled,
+        });
+        if (!next) {
+          return;
+        }
+
+        logToConsole("info", "切换 MCP Server 生效范围", {
+          id: next.id,
+          server_key: next.server_key,
+          workspace_id: workspaceId,
+          enabled: nextEnabled,
+        });
+        toast(nextEnabled ? "已启用" : "已停用");
+      } catch (err) {
+        logToConsole("error", "切换 MCP Server 生效范围失败", {
+          error: String(err),
+          id: server.id,
+          workspace_id: workspaceId,
+        });
+        toast(`操作失败：${String(err)}`);
       }
+    },
+    [toggleMutation, workspaceId]
+  );
 
-      logToConsole("info", "切换 MCP Server 生效范围", {
-        id: next.id,
-        server_key: next.server_key,
-        workspace_id: workspaceId,
-        enabled: nextEnabled,
-      });
-      toast(nextEnabled ? "已启用" : "已停用");
-    } catch (err) {
-      logToConsole("error", "切换 MCP Server 生效范围失败", {
-        error: String(err),
-        id: server.id,
-        workspace_id: workspaceId,
-      });
-      toast(`操作失败：${String(err)}`);
-    }
-  }
+  const handleEdit = useCallback((server: McpServerSummary) => {
+    setEditTarget(server);
+    setDialogOpen(true);
+  }, []);
 
   async function confirmDelete() {
     if (!deleteTarget) return;
@@ -163,10 +174,7 @@ export function McpServersView({ workspaceId }: McpServersViewProps) {
               server={server}
               toggling={toggling}
               onToggleEnabled={toggleEnabled}
-              onEdit={(next) => {
-                setEditTarget(next);
-                setDialogOpen(true);
-              }}
+              onEdit={handleEdit}
               onDelete={setDeleteTarget}
             />
           ))}

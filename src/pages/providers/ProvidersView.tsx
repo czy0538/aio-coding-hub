@@ -282,11 +282,11 @@ export function ProvidersView({ activeCli }: ProvidersViewProps) {
     [circuitResettingAll, resetCircuitCliMutation, circuitQuery]
   );
 
-  function requestValidateProviderModel(provider: ProviderSummary) {
+  const requestValidateProviderModel = useCallback((provider: ProviderSummary) => {
     if (activeCliRef.current !== "claude") return;
     setValidateProvider(provider);
     setValidateDialogOpen(true);
-  }
+  }, []);
 
   const confirmRemoveProvider = useCallback(async () => {
     if (!deleteTarget || deleting) return;

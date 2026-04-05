@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Command, Edit2, Globe, Link, Terminal, Trash2 } from "lucide-react";
 import type { McpServerSummary } from "../../../services/mcp";
 import { Button } from "../../../ui/Button";
@@ -17,7 +18,7 @@ function describeServer(server: Pick<McpServerSummary, "transport" | "command" |
   return server.command || "（未填写 command）";
 }
 
-export function McpServerCard({
+export const McpServerCard = memo(function McpServerCard({
   server,
   toggling,
   onToggleEnabled,
@@ -105,4 +106,4 @@ export function McpServerCard({
       </div>
     </Card>
   );
-}
+});

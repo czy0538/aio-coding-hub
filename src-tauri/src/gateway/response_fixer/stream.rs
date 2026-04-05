@@ -92,8 +92,14 @@ impl ChunkBuffer {
         if size == 0 {
             return Vec::new();
         }
-        if size > self.total {
-            panic!("ChunkBuffer.take size exceeds buffered length");
+        debug_assert!(
+            size <= self.total,
+            "ChunkBuffer.take size ({size}) exceeds buffered length ({})",
+            self.total
+        );
+        let size = size.min(self.total);
+        if size == 0 {
+            return Vec::new();
         }
 
         let mut out: Vec<u8> = Vec::with_capacity(size);
