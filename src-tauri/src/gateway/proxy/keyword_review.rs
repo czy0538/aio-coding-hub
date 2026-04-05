@@ -72,6 +72,7 @@ impl PendingReviewRegistry {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn insert(
         &self,
         trace_id: String,
