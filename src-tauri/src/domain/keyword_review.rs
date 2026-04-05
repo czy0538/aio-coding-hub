@@ -245,6 +245,7 @@ LIMIT ?1 OFFSET ?2
 }
 
 /// Mark stale pending reviews (older than `cutoff_unix`) as "timeout".
+#[allow(dead_code)]
 pub fn review_log_timeout_stale(
     conn: &Connection,
     cutoff_unix: i64,
