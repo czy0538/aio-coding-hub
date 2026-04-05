@@ -644,6 +644,7 @@ mod tests {
             None,
             vec!["secret".to_string()],
             None,
+            None,
             2000,
         );
 
@@ -661,6 +662,7 @@ mod tests {
             Some("sess-a".to_string()),
             vec!["kw1".to_string()],
             Some("s1".to_string()),
+            None,
             100,
         );
         let _rx2 = registry.insert(
@@ -668,6 +670,7 @@ mod tests {
             "codex".to_string(),
             None,
             vec!["kw2".to_string()],
+            None,
             None,
             200,
         );
@@ -684,6 +687,7 @@ mod tests {
             "claude".to_string(),
             Some("sess-x".to_string()),
             vec!["pw".to_string()],
+            None,
             None,
             300,
         );
